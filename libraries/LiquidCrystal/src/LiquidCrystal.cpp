@@ -108,9 +108,7 @@ void LiquidCrystal::begin(uint8_t cols, uint8_t lines, uint8_t dotsize) {
   // Now we pull both RS and R/W low to begin commands
   digitalWrite(_rs_pin, LOW);
   digitalWrite(_enable_pin, LOW);
-  if (_rw_pin != 255) { 
-    digitalWrite(_rw_pin, LOW);
-  }
+  digitalWrite(_rw_pin, LOW);
   
   //put the LCD into 4 bit or 8 bit mode
   if (! (_displayfunction & LCD_8BITMODE)) {
@@ -118,19 +116,20 @@ void LiquidCrystal::begin(uint8_t cols, uint8_t lines, uint8_t dotsize) {
     // figure 24, pg 46
 
     // we start in 8bit mode, try to set 4 bit mode
-    write4bits(0x03);
+    write_real(0x03);
     delayMicroseconds(4500); // wait min 4.1ms
 
     // second try
-    write4bits(0x03);
+    pulseEnable();
     delayMicroseconds(4500); // wait min 4.1ms
     
     // third go!
-    write4bits(0x03); 
+    pulseEnable();
     delayMicroseconds(150);
 
     // finally, set to 4-bit interface
-    write4bits(0x02); 
+    write_real(0x02);
+    delayMicroseconds(50);
   } else {
     // this is according to the hitachi HD44780 datasheet
     // page 45 figure 23
@@ -145,6 +144,7 @@ void LiquidCrystal::begin(uint8_t cols, uint8_t lines, uint8_t dotsize) {
 
     // third go
     command(LCD_FUNCTIONSET | _displayfunction);
+    delayMicroseconds(50);
   }
 
   // finally, set # lines, font size, etc.
@@ -287,40 +287,83 @@ inline size_t LiquidCrystal::write(uint8_t value) {
 void LiquidCrystal::send(uint8_t value, uint8_t mode) {
   digitalWrite(_rs_pin, mode);
 
-  // if there is a RW pin indicated, set it low to Write
-  if (_rw_pin != 255) { 
-    digitalWrite(_rw_pin, LOW);
-  }
-  
-  if (_displayfunction & LCD_8BITMODE) {
-    write8bits(value); 
-  } else {
-    write4bits(value>>4);
-    write4bits(value);
+  waitBusy();
+
+  if (_displayfunction & LCD_8BITMODE)
+    writeReal(value);
+  else {
+    writeReal(value >> 4);
+    writeReal(value);
   }
 }
 
 void LiquidCrystal::pulseEnable(void) {
-  digitalWrite(_enable_pin, LOW);
-  delayMicroseconds(1);    
   digitalWrite(_enable_pin, HIGH);
   delayMicroseconds(1);    // enable pulse must be >450ns
   digitalWrite(_enable_pin, LOW);
-  delayMicroseconds(100);   // commands need > 37us to settle
 }
 
-void LiquidCrystal::write4bits(uint8_t value) {
-  for (int i = 0; i < 4; i++) {
-    digitalWrite(_data_pins[i], (value >> i) & 0x01);
-  }
+uint8_t LiquidCrystal::readReal() {
+  uint8_t ret = 0;
 
-  pulseEnable();
+  digitalWrite(_enable_pin, HIGH);
+  delayMicroseconds(1); // enable pulse must be >450 ns
+                        // additionally, there is a max 360 ns delay for data
+
+  for (int i=0; i<((_displayfunction & LCD_8BITMODE) ? 8 : 4); ++i)
+    ret |= digitalRead(_data_pins[i]) << i;
+
+  digitalWrite(_enable_pin, LOW);
+
+  return ret;
 }
 
-void LiquidCrystal::write8bits(uint8_t value) {
-  for (int i = 0; i < 8; i++) {
-    digitalWrite(_data_pins[i], (value >> i) & 0x01);
+// an 8-bit read without a wait
+// used for reading the busy flag
+uint8_t LiquidCrystal::readFast() {
+  uint8_t ret;
+
+  for (int i=0; i<((_displayfunction & LCD_8BITMODE) ? 8 : 4); ++i)
+    pinMode(_data_pins[i], INPUT);
+
+  // set the RW pin high to Read
+  digitalWrite(_rw_pin, HIGH);
+
+  if (_displayfunction & LCD_8BITMODE)
+    ret = readReal();
+  else {
+    ret = readReal() << 4;
+    ret |= readReal() & 0x0f;
   }
-  
+
+  // set the RW pin low to Write
+  digitalWrite(_rw_pin, LOW);
+
+  for (int i=0; i<((_displayfunction & LCD_8BITMODE) ? 8 : 4); ++i)
+    pinMode(_data_pins[i], OUTPUT);
+
+  return ret;
+}
+
+void LiquidCrystal::waitBusy() {
+  int old_rs = digitalRead(_rs_pin);
+  digitalWrite(_rs_pin, LOW);
+
+  while (readFast() & 0x80);
+
+  digitalWrite(_rs_pin, old_rs);
+}
+
+// An 8-bit read, with a wait for the busy flag.
+// Used for other read commands than reading the busy flag.
+uint8_t LiquidCrystal::read() {
+  waitBusy();
+  return readFast();
+}
+
+void LiquidCrystal::writeReal(uint8_t value) {
+  for (int i=0; i<((_displayfunction & LCD_8BITMODE) ? 8 : 4); ++i)
+    digitalWrite(_data_pins[i], (value >> i) & 0x01);
+
   pulseEnable();
 }

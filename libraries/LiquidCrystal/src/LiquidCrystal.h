@@ -85,9 +85,12 @@ public:
   
   using Print::write;
 private:
+  uint8_t readReal();
+  uint8_t readFast();
+  void waitBusy();
+  uint8_t read();
   void send(uint8_t, uint8_t);
-  void write4bits(uint8_t);
-  void write8bits(uint8_t);
+  void writeReal(uint8_t);
   void pulseEnable();
 
   uint8_t _rs_pin; // LOW: command.  HIGH: character.
